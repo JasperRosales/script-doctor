@@ -79,3 +79,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
+// The app ships no Compose resources. Skipping this task avoids a Compose 1.8 failure
+// ("Cannot query the value of this provider") when Xcode runs embedAndSignAppleFrameworkForXcode.
+tasks.matching { it.name == "syncComposeResourcesForIos" }.configureEach { enabled = false }

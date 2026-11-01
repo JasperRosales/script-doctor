@@ -3,7 +3,7 @@ package com.scriptdoctor.platform
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.ImageBitmap
 
-/** Simple persistent string storage (SharedPreferences on Android, NSUserDefaults on iOS). */
+/** Simple persistent string storage (SharedPreferences on Android). */
 expect class KeyValueStore() {
     fun getString(key: String): String?
     fun putString(key: String, value: String?)

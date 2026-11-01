@@ -16,13 +16,6 @@ kotlin {
         compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
     }
 
-    listOf(iosArm64(), iosSimulatorArm64()).forEach { target ->
-        target.binaries.framework {
-            baseName = "ComposeApp"
-            isStatic = true
-        }
-    }
-
     sourceSets {
         commonMain.dependencies {
             implementation(compose.runtime)
@@ -40,9 +33,6 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.androidx.exifinterface)
             implementation(libs.androidx.core)
-        }
-        iosMain.dependencies {
-            implementation(libs.ktor.client.darwin)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
@@ -80,6 +70,3 @@ android {
     }
 }
 
-// The app ships no Compose resources. Skipping this task avoids a Compose 1.8 failure
-// ("Cannot query the value of this provider") when Xcode runs embedAndSignAppleFrameworkForXcode.
-tasks.matching { it.name == "syncComposeResourcesForIos" }.configureEach { enabled = false }

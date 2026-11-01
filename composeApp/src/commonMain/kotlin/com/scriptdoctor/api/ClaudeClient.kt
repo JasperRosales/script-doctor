@@ -48,7 +48,7 @@ data class ClaudeResponse(val transcription: Transcription, val model: String)
 /**
  * Minimal Claude Messages API client for Kotlin Multiplatform.
  *
- * Anthropic has no official SDK that runs on Kotlin/Native (iOS), so this shared client
+ * Lives in commonMain, which can't depend on the JVM-only Anthropic Java SDK, so it
  * calls `POST /v1/messages` directly with Ktor. It sends the photo as a base64 image block
  * and constrains the reply to [TranscriptionSchema] with structured outputs.
  */

@@ -33,29 +33,3 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Script Doctor ${TAG}" --generate-notes
           gh release upload "$TAG" "ScriptDoctor-${TAG}-android.apk" --clobber
 
-  ios:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Build iOS simulator app
-        run: |
-          brew install xcodegen
-          cd iosApp && xcodegen generate
-          xcodebuild -project iosApp.xcodeproj -scheme iosApp -configuration Release \
-            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
-      - name: Attach simulator build to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          cd iosApp/build/Build/Products/Release-iphonesimulator
-          zip -qry "$GITHUB_WORKSPACE/ScriptDoctor-${TAG}-ios-simulator.zip" ScriptDoctor.app
-          cd "$GITHUB_WORKSPACE"
-          for i in 1 2 3 4 5 6; do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 20; done
-          gh release upload "$TAG" "ScriptDoctor-${TAG}-ios-simulator.zip" --clobber

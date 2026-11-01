@@ -1,7 +1,7 @@
 # script-doctor
 It decodes a doctor's handwriting before it causes harm. Built for DSH Hacks V2 (AI x Healthcare).
 
-Script Doctor is a **Kotlin Multiplatform + Compose Multiplatform** app for **Android and iOS**. Photograph a handwritten prescription and it:
+Script Doctor is an **Android** app built with **Kotlin Multiplatform + Compose Multiplatform** (Android target only). Photograph a handwritten prescription and it:
 
 1. **Transcribes every medication** (drug, strength, form, route, frequency, duration, quantity) using Claude's vision model, keeping the line exactly as written.
 2. **Explains the directions in plain language** a patient can follow.
@@ -20,8 +20,7 @@ Script Doctor is a **Kotlin Multiplatform + Compose Multiplatform** app for **An
 
 Get the builds from [Releases](https://github.com/JasperRosales/script-doctor/releases):
 
-- **Android**: `ScriptDoctor-vX.Y.Z-android.apk`. Sideload it (Android 8.0+).
-- **iOS**: `ScriptDoctor-vX.Y.Z-ios-simulator.zip` is an unsigned simulator build. Unzip it and drag `ScriptDoctor.app` onto a booted simulator, or run `xcrun simctl install booted ScriptDoctor.app`. To run on a real iPhone, build from source with your own signing team (see below).
+- **Android**: `ScriptDoctor-vX.Y.Z-android.apk`. Sideload it on Android 8.0 or later. You may need to allow installs from unknown sources.
 
 On first launch, open **Settings** and paste an [Anthropic API key](https://console.anthropic.com/). Tap **Try a sample result** to see the app without a key.
 
@@ -40,9 +39,8 @@ On first launch, open **Settings** and paste an [Anthropic API key](https://cons
 
 - **Shared code (`composeApp/src/commonMain`)**: UI, state, Claude client (Ktor), JSON schema, safety rules, history. Nearly all of the app lives here.
 - **Android (`androidMain`)**: photo picker, camera via `FileProvider`, EXIF-aware downscaling, SharedPreferences.
-- **iOS (`iosMain` + `iosApp/`)**: `PHPickerViewController`, `UIImagePickerController` camera, NSUserDefaults, and a SwiftUI host for the Compose UI.
 
-The Claude call uses raw HTTP because no official Anthropic SDK runs on Kotlin/Native (iOS). The request:
+The Claude client lives in `commonMain`, which can't use the JVM-only Anthropic Java SDK, so it calls the Messages API over HTTP with Ktor. The request:
 - constrains the reply to the transcription schema with `output_config.format` (structured outputs),
 - sets `output_config.effort: "high"`, since accuracy matters more than speed here,
 - enables server-side refusal fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`),
@@ -56,26 +54,19 @@ The API key is stored in app-private storage on the device. That's fine for a ha
 
 ## Build from source
 
-Requirements: JDK 17, Android SDK (API 35). For iOS you also need macOS with Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+Requirements: JDK 17 and the Android SDK (API 35).
 
 ```bash
-# Android
 ./gradlew :composeApp:assembleDebug            # APK → composeApp/build/outputs/apk/debug/
 ./gradlew :composeApp:installDebug             # install on a connected device/emulator
 
 # Tests (shared logic: safety rules + API client)
 ./gradlew :composeApp:testDebugUnitTest
-./gradlew :composeApp:iosSimulatorArm64Test    # macOS only
-
-# iOS
-brew install xcodegen
-cd iosApp && xcodegen generate && open iosApp.xcodeproj
-# In Xcode: select the iosApp target → Signing & Capabilities → pick your team → Run
 ```
 
 ## Releasing
 
-Push a tag like `v1.0.1`. The `Release` workflow builds the Android APK on Ubuntu and the iOS simulator app on macOS, then attaches both to the GitHub release.
+Push a tag like `v1.0.1`. The `Release` workflow runs the tests, builds the release APK, and attaches it to the GitHub release.
 
 The release APK is signed with the debug key so it installs out of the box. Add a real signing config before publishing to the Play Store.
 
@@ -84,11 +75,9 @@ The release APK is signed with the debug key so it installs out of the box. Add 
 ```
 composeApp/
   src/commonMain/   shared UI, Claude client, safety checker, models
-  src/commonTest/   SafetyChecker + ClaudeClient tests (run on Android & iOS)
+  src/commonTest/   SafetyChecker + ClaudeClient tests
   src/androidMain/  MainActivity, image picker/camera, storage
-  src/iosMain/      MainViewController, PHPicker/camera, storage
-iosApp/             XcodeGen spec + SwiftUI entry point
-.github/workflows/  CI (Android + iOS) and tag-triggered release
+.github/workflows/  CI and tag-triggered release
 ```
 
 ## License

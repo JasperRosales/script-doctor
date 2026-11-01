@@ -8,10 +8,5 @@ local.properties
 captures/
 .externalNativeBuild
 .cxx
-*.xcodeproj/
-!*.xcodeproj/project.pbxproj
-xcuserdata/
-iosApp/iosApp.xcodeproj/
-iosApp/build/
 *.apk
 *.aab

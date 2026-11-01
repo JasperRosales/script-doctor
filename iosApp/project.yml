@@ -28,6 +28,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.scriptdoctor.app
         PRODUCT_NAME: ScriptDoctor
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # The Kotlin framework is built for arm64 only (device + Apple Silicon simulator).
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
         FRAMEWORK_SEARCH_PATHS: $(SRCROOT)/../composeApp/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)
         OTHER_LDFLAGS: ["$(inherited)", "-framework", "ComposeApp"]
     preBuildScripts:

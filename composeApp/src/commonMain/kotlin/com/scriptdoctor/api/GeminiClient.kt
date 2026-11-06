@@ -26,53 +26,51 @@ import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
 sealed class DecodeException(message: String) : Exception(message) {
-    class MissingApiKey : DecodeException("Add your Anthropic API key in Settings first.")
+    class MissingApiKey : DecodeException("Add your Gemini API key in Settings first.")
     class Http(val status: Int, detail: String) : DecodeException(httpMessage(status, detail))
-    class Refused(detail: String) : DecodeException("Claude declined to read this image. $detail".trim())
+    class Refused(detail: String) : DecodeException("Gemini declined to read this image. $detail".trim())
     class Truncated : DecodeException("The response was cut off before it finished. Try again with a tighter crop.")
     class Malformed(detail: String) : DecodeException("Could not understand the response: $detail")
     class Network(detail: String) : DecodeException("Network error: $detail")
 }
 
-private fun httpMessage(status: Int, detail: String) = when (status) {
-    401 -> "The API key was rejected. Check it in Settings."
-    403 -> "This API key is not allowed to use the model."
-    413 -> "The image is too large. Try a smaller photo."
-    429 -> "Rate limited by the API. Wait a moment and try again."
-    in 500..599 -> "The Claude API is having trouble (HTTP $status). Try again shortly."
+private fun httpMessage(status: Int, detail: String) = when {
+    status == 401 || (status == 400 && detail.contains("API key", ignoreCase = true)) ->
+        "The API key was rejected. Check it in Settings."
+    status == 403 -> "This API key is not allowed to use the model."
+    status == 413 -> "The image is too large. Try a smaller photo."
+    status == 429 -> "Gemini rate limit or free-tier quota reached. Wait a moment and try again."
+    status in 500..599 -> "The Gemini API is having trouble (HTTP $status). Try again shortly."
     else -> "Request failed (HTTP $status). $detail"
 }
 
-data class ClaudeResponse(val transcription: Transcription, val model: String)
+data class GeminiResponse(val transcription: Transcription, val model: String)
 
 /**
- * Minimal Claude Messages API client for Kotlin Multiplatform.
+ * Minimal Gemini API client for Kotlin Multiplatform.
  *
- * Lives in commonMain, which can't depend on the JVM-only Anthropic Java SDK, so it
- * calls `POST /v1/messages` directly with Ktor. It sends the photo as a base64 image block
- * and constrains the reply to [TranscriptionSchema] with structured outputs.
+ * Calls the Interactions API (`POST /v1beta/interactions`) directly with Ktor so it works from
+ * commonMain. It sends the photo as an inline base64 image and constrains the reply to
+ * [TranscriptionSchema] with structured outputs.
  */
-class ClaudeClient(
+class GeminiClient(
     private val http: HttpClient,
     private val apiKeyProvider: () -> String?,
     private val model: String = DEFAULT_MODEL,
-    private val baseUrl: String = "https://api.anthropic.com",
+    private val baseUrl: String = "https://generativelanguage.googleapis.com",
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
     @OptIn(ExperimentalEncodingApi::class)
-    suspend fun decode(jpeg: ByteArray): ClaudeResponse {
+    suspend fun decode(jpeg: ByteArray): GeminiResponse {
         val key = apiKeyProvider()?.trim().orEmpty()
         if (key.isEmpty()) throw DecodeException.MissingApiKey()
 
         val body = buildRequest(Base64.encode(jpeg))
         val response = try {
-            http.post("$baseUrl/v1/messages") {
-                header("x-api-key", key)
-                header("anthropic-version", API_VERSION)
-                // Server-side refusal fallback: if a safety classifier declines, the API
-                // retries on a fallback model inside the same call.
-                header("anthropic-beta", FALLBACK_BETA)
+            http.post("$baseUrl/v1beta/interactions") {
+                header("x-goog-api-key", key)
+                header("Api-Revision", API_REVISION)
                 contentType(ContentType.Application.Json)
                 setBody(body.toString())
             }
@@ -83,7 +81,9 @@ class ClaudeClient(
         val text = response.bodyAsText()
         if (!response.status.isSuccess()) {
             val detail = runCatching {
-                json.parseToJsonElement(text).jsonObject["error"]?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
+                // Google sometimes wraps the error object in a one-element array.
+                val el = json.parseToJsonElement(text).let { (it as? JsonArray)?.firstOrNull() ?: it }
+                el.jsonObject["error"]?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
             }.getOrNull().orEmpty()
             throw DecodeException.Http(response.status.value, detail)
         }
@@ -92,72 +92,71 @@ class ClaudeClient(
 
     internal fun buildRequest(imageBase64: String): JsonObject = buildJsonObject {
         put("model", model)
-        put("max_tokens", 16000)
-        put("fallbacks", "default")
-        put("system", SYSTEM_PROMPT)
-        putJsonObject("output_config") {
-            // Misreading a prescription can hurt someone; spend the extra reasoning.
-            put("effort", "high")
-            putJsonObject("format") {
-                put("type", "json_schema")
-                put("schema", TranscriptionSchema.schema)
-            }
-        }
-        putJsonArray("messages") {
+        // Stateless: don't keep the prescription on Google's side for follow-up turns.
+        put("store", false)
+        put("system_instruction", SYSTEM_PROMPT)
+        putJsonArray("input") {
             add(buildJsonObject {
-                put("role", "user")
-                putJsonArray("content") {
-                    add(buildJsonObject {
-                        put("type", "image")
-                        putJsonObject("source") {
-                            put("type", "base64")
-                            put("media_type", "image/jpeg")
-                            put("data", imageBase64)
-                        }
-                    })
-                    add(buildJsonObject {
-                        put("type", "text")
-                        put("text", USER_PROMPT)
-                    })
-                }
+                put("type", "text")
+                put("text", USER_PROMPT)
             })
+            add(buildJsonObject {
+                put("type", "image")
+                put("mime_type", "image/jpeg")
+                put("data", imageBase64)
+            })
+        }
+        putJsonObject("generation_config") {
+            // Misreading a prescription can hurt someone; spend the extra reasoning.
+            put("thinking_level", "high")
+            put("max_output_tokens", 16000)
+        }
+        putJsonObject("response_format") {
+            put("type", "text")
+            put("mime_type", "application/json")
+            put("schema", TranscriptionSchema.schema)
         }
     }
 
-    internal fun parseResponse(raw: String): ClaudeResponse {
+    internal fun parseResponse(raw: String): GeminiResponse {
         val root = try {
             json.parseToJsonElement(raw).jsonObject
         } catch (e: Exception) {
             throw DecodeException.Malformed("not JSON")
         }
         val modelUsed = root["model"]?.jsonPrimitive?.contentOrNull ?: model
-        when (root["stop_reason"]?.jsonPrimitive?.contentOrNull) {
-            "refusal" -> {
-                val explanation = root["stop_details"]?.let { d ->
-                    (d as? JsonObject)?.get("explanation")?.jsonPrimitive?.contentOrNull
-                }.orEmpty()
-                throw DecodeException.Refused(explanation)
-            }
-            "max_tokens" -> throw DecodeException.Truncated()
+        val status = root["status"]?.jsonPrimitive?.contentOrNull
+        val reason = (root["incomplete_details"] as? JsonObject)?.get("reason")?.jsonPrimitive?.contentOrNull.orEmpty()
+        when {
+            status == "incomplete" && reason.contains("token", ignoreCase = true) -> throw DecodeException.Truncated()
+            status == "incomplete" || status == "failed" || status == "blocked" ->
+                throw DecodeException.Refused(reason.ifEmpty { "Status: $status." })
         }
-        val content = root["content"] as? JsonArray ?: throw DecodeException.Malformed("no content")
-        val text = content
+        val steps = (root["steps"] ?: root["outputs"]) as? JsonArray ?: throw DecodeException.Malformed("no output")
+        val text = steps
             .mapNotNull { it as? JsonObject }
+            .flatMap { step ->
+                when (step["type"]?.jsonPrimitive?.contentOrNull) {
+                    "model_output" -> (step["content"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+                    "text" -> listOf(step) // legacy flat outputs
+                    else -> emptyList()
+                }
+            }
             .filter { it["type"]?.jsonPrimitive?.contentOrNull == "text" }
             .joinToString("") { it["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
         if (text.isBlank()) throw DecodeException.Malformed("empty reply")
         val transcription = try {
             json.decodeFromString(Transcription.serializer(), text)
         } catch (e: Exception) {
+            if (status != "completed" && text.trimEnd().lastOrNull() != '}') throw DecodeException.Truncated()
             throw DecodeException.Malformed(e.message?.take(200) ?: "schema mismatch")
         }
-        return ClaudeResponse(transcription, modelUsed)
+        return GeminiResponse(transcription, modelUsed)
     }
 
     companion object {
-        const val DEFAULT_MODEL = "claude-opus-5-5"
-        const val API_VERSION = "2026-10-21"
-        const val FALLBACK_BETA = "server-side-fallback-2026-07-01"
+        const val DEFAULT_MODEL = "gemini-3.8-flash"
+        const val API_REVISION = "2026-05-20"
 
         fun defaultHttpClient(): HttpClient = HttpClient {
             install(HttpTimeout) {

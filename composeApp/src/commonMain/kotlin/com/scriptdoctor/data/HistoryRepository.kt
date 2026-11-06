@@ -23,7 +23,7 @@ class HistoryRepository(private val store: KeyValueStore = KeyValueStore()) {
 
     companion object {
         private const val KEY_HISTORY = "history_v1"
-        private const val KEY_API_KEY = "anthropic_api_key"
+        private const val KEY_API_KEY = "gemini_api_key"
         const val MAX_ITEMS = 50
     }
 }

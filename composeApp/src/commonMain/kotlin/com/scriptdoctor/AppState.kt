@@ -3,7 +3,7 @@ package com.scriptdoctor
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.scriptdoctor.api.ClaudeClient
+import com.scriptdoctor.api.GeminiClient
 import com.scriptdoctor.data.HistoryRepository
 import com.scriptdoctor.model.DecodeResult
 import com.scriptdoctor.model.Transcription
@@ -24,7 +24,7 @@ sealed interface Screen {
 class AppState(
     private val scope: CoroutineScope,
     private val repo: HistoryRepository = HistoryRepository(),
-    private val client: ClaudeClient = ClaudeClient(ClaudeClient.defaultHttpClient(), { repo.apiKey }),
+    private val client: GeminiClient = GeminiClient(GeminiClient.defaultHttpClient(), { repo.apiKey }),
 ) {
     var screen: Screen by mutableStateOf(Screen.Home)
         private set
@@ -40,11 +40,20 @@ class AppState(
 
     private var job: Job? = null
 
-    fun navigate(to: Screen) { screen = to }
+    /** Tab to return to when leaving a result (Home after a decode, History when opened from there). */
+    private var resultOrigin: Screen = Screen.Home
+
+    fun navigate(to: Screen) {
+        if (to is Screen.Result && screen !is Screen.Result) resultOrigin = screen
+        screen = to
+    }
 
     fun back(): Boolean {
-        if (screen == Screen.Home) return false
-        screen = Screen.Home
+        screen = when (screen) {
+            Screen.Home -> return false
+            is Screen.Result -> resultOrigin.also { resultOrigin = Screen.Home }
+            else -> Screen.Home
+        }
         return true
     }
 
@@ -96,7 +105,7 @@ class AppState(
             repo.save(history)
         }
         image = null
-        screen = Screen.Result(result)
+        navigate(Screen.Result(result))
     }
 
     fun deleteHistory(id: String) {

@@ -29,6 +29,6 @@ class ImagePickerLauncher(
 @Composable
 expect fun rememberImagePicker(onImage: (ByteArray) -> Unit, onError: (String) -> Unit): ImagePickerLauncher
 
-/** Claude's vision input gains nothing above ~1568 px on the long edge; larger just costs upload time. */
+/** Handwriting stays readable at ~1568 px on the long edge; larger just costs upload time. */
 const val MAX_IMAGE_EDGE_PX = 1568
 const val JPEG_QUALITY = 88

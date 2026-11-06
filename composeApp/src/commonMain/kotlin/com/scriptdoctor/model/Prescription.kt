@@ -18,7 +18,7 @@ enum class Confidence {
     @SerialName("low") LOW,
 }
 
-/** One medication line decoded from the prescription. Field names mirror the JSON schema sent to Claude. */
+/** One medication line decoded from the prescription. Field names mirror the JSON schema sent to Gemini. */
 @Serializable
 data class Medication(
     @SerialName("raw_text") val rawText: String,
@@ -35,7 +35,7 @@ data class Medication(
     val concerns: List<String>,
 )
 
-/** Structured transcription returned by Claude. */
+/** Structured transcription returned by Gemini. */
 @Serializable
 data class Transcription(
     @SerialName("is_prescription") val isPrescription: Boolean,

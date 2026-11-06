@@ -1,6 +1,6 @@
 package com.scriptdoctor
 
-import com.scriptdoctor.api.ClaudeClient
+import com.scriptdoctor.api.GeminiClient
 import com.scriptdoctor.api.DecodeException
 import com.scriptdoctor.model.Confidence
 import io.ktor.client.HttpClient
@@ -21,7 +21,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-class ClaudeClientTest {
+class GeminiClientTest {
 
     private val transcriptionJson = """
         {"is_prescription":true,"legibility":"clear","patient_name":"","prescriber_name":"Dr. A","date":"",
@@ -31,21 +31,20 @@ class ClaudeClientTest {
          "alternative_readings":[],"concerns":[]}],"general_notes":[]}
     """.trimIndent()
 
-    private fun apiResponse(text: String, stopReason: String = "end_turn"): String {
+    private fun apiResponse(text: String, status: String = "completed"): String {
         val escaped = Json.encodeToString(kotlinx.serialization.json.JsonPrimitive(text))
-        return """{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5-5",
-            "content":[{"type":"thinking","thinking":"","signature":"x"},{"type":"text","text":$escaped}],
-            "stop_reason":"$stopReason","stop_details":null}"""
+        return """{"id":"i_1","model":"gemini-3.8-flash","status":"$status",
+            "steps":[{"type":"thought","signature":"x"},{"type":"model_output","content":[{"type":"text","text":$escaped}]}]}"""
     }
 
     private fun client(status: HttpStatusCode = HttpStatusCode.OK, body: String, onRequest: (JsonObject, Map<String, String?>) -> Unit = { _, _ -> }) =
-        ClaudeClient(
+        GeminiClient(
             HttpClient(MockEngine { req ->
                 val sent = Json.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject
-                onRequest(sent, listOf("x-api-key", "anthropic-version", "anthropic-beta").associateWith { req.headers[it] })
+                onRequest(sent, listOf("x-goog-api-key", "Api-Revision").associateWith { req.headers[it] })
                 respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
             }),
-            apiKeyProvider = { "sk-test" },
+            apiKeyProvider = { "AIza-test" },
         )
 
     @Test
@@ -58,41 +57,56 @@ class ClaudeClientTest {
 
         assertEquals("Amoxicillin", result.transcription.medications.single().drugName)
         assertEquals(Confidence.HIGH, result.transcription.medications.single().confidence)
-        assertEquals("claude-opus-5-5", result.model)
+        assertEquals("gemini-3.8-flash", result.model)
 
         val body = captured!!
-        assertEquals("claude-opus-5-5", body["model"]!!.jsonPrimitive.content)
-        assertEquals("json_schema", body["output_config"]!!.jsonObject["format"]!!.jsonObject["type"]!!.jsonPrimitive.content)
-        val image = body["messages"]!!.jsonArray[0].jsonObject["content"]!!.jsonArray[0].jsonObject
+        assertEquals(GeminiClient.DEFAULT_MODEL, body["model"]!!.jsonPrimitive.content)
+        assertEquals("application/json", body["response_format"]!!.jsonObject["mime_type"]!!.jsonPrimitive.content)
+        assertEquals("object", body["response_format"]!!.jsonObject["schema"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        val image = body["input"]!!.jsonArray[1].jsonObject
         assertEquals("image", image["type"]!!.jsonPrimitive.content)
-        assertEquals("AQID", image["source"]!!.jsonObject["data"]!!.jsonPrimitive.content)
-        assertEquals("sk-test", headers["x-api-key"])
-        assertEquals(ClaudeClient.API_VERSION, headers["anthropic-version"])
-        assertTrue(headers["anthropic-beta"]!!.contains("server-side-fallback"))
+        assertEquals("AQID", image["data"]!!.jsonPrimitive.content)
+        assertEquals("false", body["store"]!!.jsonPrimitive.content)
+        assertEquals("AIza-test", headers["x-goog-api-key"])
+        assertEquals(GeminiClient.API_REVISION, headers["Api-Revision"])
     }
 
     @Test
-    fun refusalIsReported() = runTest {
-        val c = client(body = """{"model":"claude-opus-5-5","content":[],"stop_reason":"refusal","stop_details":{"type":"refusal","category":null,"explanation":"nope"}}""")
+    fun blockedIsReported() = runTest {
+        val c = client(body = """{"model":"gemini-3.8-flash","status":"failed","steps":[]}""")
         assertFailsWith<DecodeException.Refused> { c.decode(byteArrayOf(1)) }
     }
 
     @Test
     fun maxTokensIsReported() = runTest {
-        val c = client(body = apiResponse("{\"is_pre", stopReason = "max_tokens"))
+        val c = client(body = """{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"steps":[]}""")
         assertFailsWith<DecodeException.Truncated> { c.decode(byteArrayOf(1)) }
     }
 
     @Test
+    fun truncatedJsonIsReported() = runTest {
+        val c = client(body = apiResponse("{\"is_pre", status = "incomplete"))
+        assertFailsWith<DecodeException> { c.decode(byteArrayOf(1)) }
+    }
+
+    @Test
     fun httpErrorsAreMapped() = runTest {
-        val c = client(HttpStatusCode.Unauthorized, """{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}""")
+        val c = client(HttpStatusCode.BadRequest, """{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}""")
         val e = assertFailsWith<DecodeException.Http> { c.decode(byteArrayOf(1)) }
-        assertEquals(401, e.status)
+        assertEquals(400, e.status)
+        assertTrue(e.message!!.contains("rejected"))
+    }
+
+    @Test
+    fun arrayWrappedErrorIsMapped() = runTest {
+        val c = client(HttpStatusCode.BadRequest, """[{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}]""")
+        val e = assertFailsWith<DecodeException.Http> { c.decode(byteArrayOf(1)) }
+        assertTrue(e.message!!.contains("rejected"))
     }
 
     @Test
     fun missingKeyFailsFast() = runTest {
-        val c = ClaudeClient(HttpClient(MockEngine { error("should not be called") }), apiKeyProvider = { " " })
+        val c = GeminiClient(HttpClient(MockEngine { error("should not be called") }), apiKeyProvider = { " " })
         assertFailsWith<DecodeException.MissingApiKey> { c.decode(byteArrayOf(1)) }
     }
 }
